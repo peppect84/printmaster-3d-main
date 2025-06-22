@@ -1,0 +1,17 @@
+// server/tsconfig.json
+{
+  "compilerOptions": {
+    "target": "ES2020",             /* Specifica la versione di ECMAScript di destinazione. */
+    "module": "CommonJS",           /* Specifica il sistema di moduli per il codice generato. */
+    "esModuleInterop": true,        /* Abilita l'interoperabilità tra i moduli CommonJS e ES. Questo è cruciale per i tuoi import! */
+    "forceConsistentCasingInFileNames": true, /* Assicura che i riferimenti ai file abbiano la stessa maiuscola/minuscola. */
+    "strict": true,                 /* Abilita tutti i controlli strict-mode di TypeScript. */
+    "skipLibCheck": true,           /* Salta il controllo di tipo dei file di dichiarazione .d.ts. */
+    "outDir": "./dist",             /* Specifica la directory di output per i file compilati. */
+    "rootDir": "./",                /* Specifica la directory radice degli input di TypeScript. */
+    "resolveJsonModule": true,      /* Consenti l'importazione di moduli con estensione .json */
+    "sourceMap": true               /* Genera file .map. */
+  },
+  "include": ["./*.ts"],           /* Includi tutti i file .ts nella directory corrente. */
+  "exclude": ["node_modules"]       /* Escludi la directory node_modules. */
+}

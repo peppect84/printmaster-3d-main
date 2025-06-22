@@ -1,0 +1,42 @@
+# Node.js
+node_modules/
+dist/ # Se TypeScript compila in una cartella 'dist'
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env # Se usi un file .env generico
+.env.local # Molto importante per le tue variabili d'ambiente
+
+# macOS
+.DS_Store
+
+# Visual Studio Code
+.vscode/
+
+# Render.com specific (if you have any Render config files in repo root)
+.render/
+
+# Logs
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+node_modules
+dist
+dist-ssr
+*.local
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
