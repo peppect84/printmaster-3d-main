@@ -11,17 +11,34 @@ dotenv.config({ path: '../.env.local' });
 const app = express();
 const port = process.env.PORT || 5000;
 
+// *** INIZIO MODIFICA CORS EFFETTUATA ***
+const allowedOrigins = [
+  'http://localhost:8080', // Per lo sviluppo locale se usi questa porta
+  'http://localhost:5173', // Per lo sviluppo locale se usi questa porta Vite
+  'https://printmaster3d.netlify.app' // Il tuo dominio Netlify reale
+];
+
 app.use(cors({
-  origin: 'http://localhost:8080',
-  methods: ['POST', 'OPTIONS'],
-  allowedHeaders: ['Content-Type'],
+  origin: function (origin, callback) {
+    // Permetti richieste senza origin (es. curl, postman, app native)
+    if (!origin) return callback(null, true);
+    // Permetti solo gli origin specificati
+    if (allowedOrigins.indexOf(origin) === -1) {
+      const msg = `The CORS policy for this site does not allow access from the specified Origin: ${origin}.`;
+      console.error(msg); // Logga questo errore per debug su Render
+      return callback(new Error(msg), false);
+    }
+    return callback(null, true);
+  },
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Includi OPTIONS per le preflight requests di CORS
+  allowedHeaders: ['Content-Type', 'Authorization'], // Specifica gli header che il tuo frontend potrebbe inviare
+  credentials: true // Necessario se usi cookie o sessioni (anche se qui non strettamente richiesto)
 }));
 
-app.options('/api/send-email', cors({
-  origin: 'http://localhost:8080',
-  methods: ['POST'],
-  allowedHeaders: ['Content-Type'],
-}));
+// La riga app.options separata non è più necessaria con la configurazione app.use(cors) sopra
+// che include i metodi 'OPTIONS'. Quindi questa riga è stata rimossa/ignorata.
+// *** FINE MODIFICA CORS EFFETTUATA ***
+
 
 interface FormidableRequest extends Request {
   fields?: formidable.Fields;
@@ -47,12 +64,11 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
         if (err) {
           console.error('Formidable parse error:', err);
           if (err.code === formidable.errors.biggerThanMaxFileSize) {
-            // <--- MODIFICATO QUI: Non fare 'return reject' qui, ma invia subito la risposta e poi reject
             res.status(400).json({ message: 'File is too large (max 10MB)', error: err.message });
-            return; // Interrompi l'esecuzione della callback
+          } else {
+            res.status(500).json({ message: 'Error parsing form data', error: err.message });
           }
-          res.status(500).json({ message: 'Error parsing form data', error: err.message });
-          return; // Interrompi l'esecuzione della callback
+          return;
         }
         resolve({ fields, files });
       });
@@ -63,14 +79,13 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     const message = Array.isArray(data.fields.message) ? data.fields.message[0] : String(data.fields.message || '');
 
     const file = Array.isArray(data.files.file)
-                 ? data.files.file[0]
-                 : (data.files.file !== undefined ? data.files.file as formidable.File : null);
+                   ? data.files.file[0]
+                   : (data.files.file !== undefined ? data.files.file as formidable.File : null);
 
 
     if (!name || !email || !message) {
-      // <--- MODIFICATO QUI: Non fare 'return' per res.status().json()
       res.status(400).json({ message: 'Missing required fields' });
-      return; // Interrompi l'esecuzione della funzione
+      return;
     }
 
     const transporter = nodemailer.createTransport({
@@ -101,9 +116,8 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
               if (err) console.error('Errore durante l\'eliminazione del file temporaneo dopo errore lettura:', err);
             });
           }
-          // <--- MODIFICATO QUI: Non fare 'return' per res.status().json()
           res.status(500).json({ message: 'Error processing attachment', error: (readErr as Error).message });
-          return; // Interrompi l'esecuzione della funzione
+          return;
       }
     }
 
@@ -127,7 +141,6 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
         if (err) console.error('Errore durante l\'eliminazione del file temporaneo:', err);
       });
     }
-    // <--- MODIFICATO QUI: Non fare 'return' per res.status().json()
     res.status(200).json({ message: 'Email sent successfully!' });
 
   } catch (error) {
@@ -138,7 +151,6 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
         if (unlinkErr) console.error('Errore durante l\'eliminazione del file temporaneo in caso di errore:', unlinkErr);
       });
     }
-    // <--- MODIFICATO QUI: Non fare 'return' per res.status().json()
     res.status(500).json({ message: 'Error sending email', error: (error as Error).message });
   }
 };
