@@ -63,7 +63,7 @@ const ContactSection = () => {
     try {
       // ***** QUI C'E' LA MODIFICA CHIAVE *****
       // Invia alla tua API Route di Express, che dovrebbe girare sulla porta 5000
-      const response = await fetch('http://localhost:5000/api/send-email', {
+      const response = await fetch('https://printmaster-3d-main.onrender.com', {
         method: 'POST',
         body: data,
       });
