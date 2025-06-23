@@ -62,11 +62,14 @@ const ContactSection = () => {
 
     try {
       // ***** QUI C'E' LA MODIFICA CHIAVE *****
-      // Invia alla tua API Route di Express, che dovrebbe girare sulla porta 5000
-      const response = await fetch('https://printmaster-3d-main.onrender.com', {
+      // Invia alla tua API Route di Express
+      const response = await fetch('https://printmaster-3d-main.onrender.com/api/send-email', {
         method: 'POST',
         body: data,
       });
+
+      // Il blocco '};' extra qui sotto è stato rimosso
+      // }; // <--- QUESTO ERA L'ERRORE DI SINTASSI CHE HO RIMOSSO
 
       if (response.ok) {
         toast({
@@ -78,7 +81,7 @@ const ContactSection = () => {
       } else {
         // Tentiamo di leggere la risposta JSON anche in caso di errore
         // Il tuo server Express è stato configurato per inviare JSON in caso di errore
-        const errorData = await response.json(); 
+        const errorData = await response.json();
         console.error('Errore invio form:', errorData.message || JSON.stringify(errorData));
         throw new Error(errorData.message || 'Errore sconosciuto dal server');
       }
