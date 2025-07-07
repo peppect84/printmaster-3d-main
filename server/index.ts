@@ -5,6 +5,7 @@ import nodemailer from 'nodemailer';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import cors from 'cors';
+import axios from 'axios'; // <-- NUOVA IMPORTAZIONE per fare richieste HTTP
 
 dotenv.config({ path: '../.env.local' });
 
@@ -30,13 +31,10 @@ app.use(cors({
     }
     return callback(null, true);
   },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'], // Includi OPTIONS per le preflight requests di CORS
-  allowedHeaders: ['Content-Type', 'Authorization'], // Specifica gli header che il tuo frontend potrebbe inviare
-  credentials: true // Necessario se usi cookie o sessioni (anche se qui non strettamente richiesto)
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
 }));
-
-// La riga app.options separata non è più necessaria con la configurazione app.use(cors) sopra
-// che include i metodi 'OPTIONS'. Quindi questa riga è stata rimossa/ignorata.
 // *** FINE MODIFICA CORS EFFETTUATA ***
 
 
@@ -46,6 +44,8 @@ interface FormidableRequest extends Request {
 }
 
 const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Response) => {
+  let fileToCleanUp: formidable.File | null = null; // Variabile per tenere traccia del file temporaneo da eliminare
+
   try {
     const data: { fields: formidable.Fields; files: formidable.Files } = await new Promise((resolve, reject) => {
       const uploadDir = './temp_uploads';
@@ -54,7 +54,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
       }
 
       const form = formidable({
-        multiples: false,
+        multitudes: false,
         maxFileSize: 10 * 1024 * 1024,
         uploadDir: uploadDir,
         keepExtensions: true,
@@ -64,11 +64,10 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
         if (err) {
           console.error('Formidable parse error:', err);
           if (err.code === formidable.errors.biggerThanMaxFileSize) {
-            res.status(400).json({ message: 'File is too large (max 10MB)', error: err.message });
+            return reject({ status: 400, message: 'File is too large (max 10MB)', error: err.message });
           } else {
-            res.status(500).json({ message: 'Error parsing form data', error: err.message });
+            return reject({ status: 500, message: 'Error parsing form data', error: err.message });
           }
-          return;
         }
         resolve({ fields, files });
       });
@@ -77,16 +76,65 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     const name = Array.isArray(data.fields.name) ? data.fields.name[0] : String(data.fields.name || '');
     const email = Array.isArray(data.fields.email) ? data.fields.email[0] : String(data.fields.email || '');
     const message = Array.isArray(data.fields.message) ? data.fields.message[0] : String(data.fields.message || '');
+    // Recupera il token hCaptcha
+    const hcaptchaToken = Array.isArray(data.fields.hcaptchaToken) ? data.fields.hcaptchaToken[0] : String(data.fields.hcaptchaToken || '');
+
 
     const file = Array.isArray(data.files.file)
-                   ? data.files.file[0]
-                   : (data.files.file !== undefined ? data.files.file as formidable.File : null);
+                    ? data.files.file[0]
+                    : (data.files.file !== undefined ? data.files.file as formidable.File : null);
+    
+    fileToCleanUp = file; // Imposta il file da pulire, se presente
 
-
-    if (!name || !email || !message) {
-      res.status(400).json({ message: 'Missing required fields' });
+    if (!name || !email || !message || !hcaptchaToken) { // Aggiunto controllo per hcaptchaToken
+      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+          fs.unlinkSync(fileToCleanUp.filepath); // Elimina il file se la validazione iniziale fallisce
+      }
+      res.status(400).json({ message: 'Missing required fields or hCaptcha token' });
       return;
     }
+
+    // --- INIZIO: Verifica hCaptcha ---
+    const HCAPTCHA_SECRET_KEY = process.env.HCAPTCHA_SECRET_KEY;
+
+    if (!HCAPTCHA_SECRET_KEY) {
+        console.error('HCAPTCHA_SECRET_KEY is not defined in environment variables.');
+        if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+            fs.unlinkSync(fileToCleanUp.filepath);
+        }
+        res.status(500).json({ message: 'Server configuration error: HCAPTCHA_SECRET_KEY not set.' });
+        return;
+    }
+
+    try {
+        const hcaptchaVerifyResponse = await axios.post('https://hcaptcha.com/siteverify', null, {
+            params: {
+                secret: HCAPTCHA_SECRET_KEY,
+                response: hcaptchaToken,
+                remoteip: req.ip // L'indirizzo IP del client per una verifica più robusta
+            }
+        });
+
+        const { success, 'error-codes': errorCodes } = hcaptchaVerifyResponse.data;
+
+        if (!success) {
+            console.error('hCaptcha verification failed:', errorCodes);
+            if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+                fs.unlinkSync(fileToCleanUp.filepath);
+            }
+            // Reindirizza il messaggio d'errore del captcha al frontend per chiarezza
+            res.status(401).json({ message: 'hCaptcha verification failed. Please try again.', errorCodes });
+            return;
+        }
+    } catch (hcaptchaError) {
+        console.error('Error during hCaptcha verification request:', hcaptchaError);
+        if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+            fs.unlinkSync(fileToCleanUp.filepath);
+        }
+        res.status(500).json({ message: 'Could not verify hCaptcha. Please try again later.' });
+        return;
+    }
+    // --- FINE: Verifica hCaptcha ---
 
     const transporter = nodemailer.createTransport({
       service: 'gmail',
@@ -111,11 +159,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
           });
       } catch (readErr) {
           console.error('Error reading temporary file:', readErr);
-          if (file) {
-            fs.unlink(file.filepath, (err) => {
-              if (err) console.error('Errore durante l\'eliminazione del file temporaneo dopo errore lettura:', err);
-            });
-          }
+          // Eliminazione del file temporaneo è gestita nel blocco finally
           res.status(500).json({ message: 'Error processing attachment', error: (readErr as Error).message });
           return;
       }
@@ -136,22 +180,23 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     };
 
     await transporter.sendMail(mailOptions);
-    if (file) {
-      fs.unlink(file.filepath, (err) => {
-        if (err) console.error('Errore durante l\'eliminazione del file temporaneo:', err);
-      });
-    }
     res.status(200).json({ message: 'Email sent successfully!' });
 
-  } catch (error) {
+  } catch (error: any) { // Specifica il tipo 'any' per 'error' o crea un'interfaccia più specifica
     console.error('Errore generale nel server API:', error);
-    const tempFile = (error as any)?.file;
-    if (tempFile && tempFile.filepath) {
-      fs.unlink(tempFile.filepath, (unlinkErr) => {
-        if (unlinkErr) console.error('Errore durante l\'eliminazione del file temporaneo in caso di errore:', unlinkErr);
+    // Gestione degli errori dalla Promise di formidable
+    if (error.status && error.message) {
+        res.status(error.status).json({ message: error.message, error: error.error });
+    } else {
+        res.status(500).json({ message: 'Error sending email', error: error.message || 'Unknown error' });
+    }
+  } finally {
+    // Assicurati che il file temporaneo venga sempre eliminato alla fine
+    if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+      fs.unlink(fileToCleanUp.filepath, (err) => {
+        if (err) console.error('Errore durante l\'eliminazione del file temporaneo nel finally:', err);
       });
     }
-    res.status(500).json({ message: 'Error sending email', error: (error as Error).message });
   }
 };
 
