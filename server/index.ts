@@ -1,226 +1,142 @@
+// index.ts
+
 import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import formidable from 'formidable';
 import nodemailer from 'nodemailer';
 import fs from 'fs';
-// Rimuovi o commenta questa riga se deployi su Render.
-// Su Render, le variabili d'ambiente sono caricate direttamente in process.env.
-// import dotenv from 'dotenv'; // <-- Metti un commento o elimina questa riga!
-
 import cors from 'cors';
 import axios from 'axios';
 
-// DEFINIZIONI INTERFACCE (che mancavano)
+// INTERFACCE
 interface FormidableRequest extends Request {
-  fields?: formidable.Fields;
-  files?: formidable.Files;
+  fields?: formidable.Fields;
+  files?: formidable.Files;
 }
 
 interface HCaptchaVerifyResponse {
-  success: boolean;
-  challenge_ts?: string;
-  hostname?: string;
-  'error-codes'?: string[];
+  success: boolean;
+  'error-codes'?: string[];
 }
-// FINE DEFINIZIONI INTERFACCE
 
 const app = express();
-// Usa process.env.PORT fornito da Render, con fallback a 10000 come suggerito dai tuoi log.
 const port = process.env.PORT || 10000;
 
-// Se stai deployando su Render, questa riga è superflua e potrebbe causare problemi
-// dotenv.config({ path: '../.env.local' }); // <-- Rimuovi o commenta questa riga su Render
-
-// Configurazione CORS (lasciata invariata dal tuo codice)
 const allowedOrigins = [
-  'http://localhost:8080',
-  'http://localhost:5173',
-  'https://printmaster3d.netlify.app' // Il tuo dominio Netlify reale
+  'http://localhost:8080',
+  'http://localhost:5173',
+  'https://printmaster3d.netlify.app'
 ];
 
 app.use(cors({
-  origin: function (origin, callback) {
-    if (!origin) return callback(null, true);
-    if (allowedOrigins.indexOf(origin) === -1) {
-      const msg = `The CORS policy for this site does not allow access from the specified Origin: ${origin}.`;
-      console.error(msg);
-      return callback(new Error(msg), false);
-    }
-    return callback(null, true);
-  },
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.indexOf(origin) === -1) {
+      return callback(new Error(`Origin not allowed: ${origin}`), false);
+    }
+    return callback(null, true);
+  },
+  methods: ['GET', 'POST', 'OPTIONS'],
+  allowedHeaders: ['Content-Type'],
+  credentials: true
 }));
 
 const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Response) => {
-  let fileToCleanUp: formidable.File | null = null;
+  let fileToCleanUp: formidable.File | null = null;
 
-  try {
-    const data: { fields: formidable.Fields; files: formidable.Files } = await new Promise((resolve, reject) => {
-      const uploadDir = './temp_uploads';
-      if (!fs.existsSync(uploadDir)) {
-        fs.mkdirSync(uploadDir);
-      }
+  try {
+    const data: { fields: formidable.Fields; files: formidable.Files } = await new Promise((resolve, reject) => {
+      const form = formidable({
+        multiples: false,
+        maxFileSize: 10 * 1024 * 1024,
+        uploadDir: './temp_uploads',
+        keepExtensions: true
+      });
 
-      const form = formidable({
-        multiples: false,
-        maxFileSize: 10 * 1024 * 1024,
-        uploadDir: uploadDir,
-        keepExtensions: true,
-      });
+      if (!fs.existsSync('./temp_uploads')) fs.mkdirSync('./temp_uploads');
 
-      form.parse(req, (err, fields, files) => {
-        if (err) {
-          console.error('Formidable parse error:', err);
-          if (err.code === formidable.errors.biggerThanMaxFileSize) {
-            return reject({ status: 400, message: 'File is too large (max 10MB)', error: err.message });
-          } else {
-            return reject({ status: 500, message: 'Error parsing form data', error: err.message });
-          }
-        }
-        resolve({ fields, files });
-      });
-    });
+      form.parse(req, (err, fields, files) => {
+        if (err) return reject({ status: 500, message: 'Errore parsing form', error: err.message });
+        resolve({ fields, files });
+      });
+    });
 
-    const name = Array.isArray(data.fields.name) ? data.fields.name[0] : String(data.fields.name || '');
-    const email = Array.isArray(data.fields.email) ? data.fields.email[0] : String(data.fields.email || '');
-    const message = Array.isArray(data.fields.message) ? data.fields.message[0] : String(data.fields.message || '');
-    const hcaptchaToken = Array.isArray(data.fields.hcaptchaToken) ? data.fields.hcaptchaToken[0] : String(data.fields.hcaptchaToken || '');
+    const name = String(data.fields.name || '');
+    const email = String(data.fields.email || '');
+    const message = String(data.fields.message || '');
+    const hcaptchaToken = String(data.fields.hcaptchaToken || '');
 
-    const file = Array.isArray(data.files.file)
-                    ? data.files.file[0]
-                    : (data.files.file !== undefined ? data.files.file as formidable.File : null);
-    
-    fileToCleanUp = file;
+    const file = data.files.file ? (Array.isArray(data.files.file) ? data.files.file[0] : data.files.file) : null;
+    fileToCleanUp = file;
 
-    if (!name || !email || !message) {
-      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
-          fs.unlinkSync(fileToCleanUp.filepath);
-      }
-      res.status(400).json({ message: 'Missing required fields' });
-      return;
-    }
+    if (!name || !email || !message) {
+      if (fileToCleanUp?.filepath && fs.existsSync(fileToCleanUp.filepath)) fs.unlinkSync(fileToCleanUp.filepath);
+      return res.status(400).json({ message: 'Campi obbligatori mancanti' });
+    }
 
-    if (!hcaptchaToken) {
-      console.error('hCaptcha token is missing from the request.');
-      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
-          fs.unlinkSync(fileToCleanUp.filepath);
-      }
-      res.status(400).json({ message: 'hCaptcha token is missing. Please try again.' });
-      return;
-    }
-    // --- INIZIO: Verifica hCaptcha ---
-    const HCAPTCHA_SECRET_KEY = process.env.HCAPTCHA_SECRET_KEY; 
+    if (!hcaptchaToken) {
+      if (fileToCleanUp?.filepath && fs.existsSync(fileToCleanUp.filepath)) fs.unlinkSync(fileToCleanUp.filepath);
+      return res.status(400).json({ message: 'Captcha mancante' });
+    }
 
-    if (!HCAPTCHA_SECRET_KEY) {
-        console.error('HCAPTCHA_SECRET_KEY is not defined in environment variables on Render. Check Render configuration.');
-        if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
-            fs.unlinkSync(fileToCleanUp.filepath);
-        }
-        res.status(500).json({ message: 'Server configuration error: HCAPTCHA_SECRET_KEY not set.' });
-        return;
-    }
+    // ✅ Verifica hCaptcha
+    const HCAPTCHA_SECRET_KEY = process.env.HCAPTCHA_SECRET_KEY;
+    if (!HCAPTCHA_SECRET_KEY) {
+      return res.status(500).json({ message: 'hCaptcha non configurato correttamente' });
+    }
 
-    try {
-        const hcaptchaVerifyResponse = await axios.post<HCaptchaVerifyResponse>('https://hcaptcha.com/siteverify', null, {
-            params: {
-                secret: HCAPTCHA_SECRET_KEY,
-                response: hcaptchaToken,
-                remoteip: req.ip 
-            }
-        });
+    const hcaptchaVerifyResponse = await axios.post<HCaptchaVerifyResponse>(
+      'https://hcaptcha.com/siteverify',
+      new URLSearchParams({
+        secret: HCAPTCHA_SECRET_KEY,
+        response: hcaptchaToken,
+        remoteip: req.ip || ''
+      })
+    );
 
-        const { success, 'error-codes': errorCodes } = hcaptchaVerifyResponse.data;
+    if (!hcaptchaVerifyResponse.data.success) {
+      if (fileToCleanUp?.filepath && fs.existsSync(fileToCleanUp.filepath)) fs.unlinkSync(fileToCleanUp.filepath);
+      return res.status(401).json({ message: 'Verifica hCaptcha fallita', errorCodes: hcaptchaVerifyResponse.data['error-codes'] });
+    }
 
-        if (!success) {
-            console.error('hCaptcha verification failed:', errorCodes);
-            if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
-                fs.unlinkSync(fileToCleanUp.filepath);
-            }
-            res.status(401).json({ message: 'hCaptcha verification failed. Please try again.', errorCodes });
-            return;
-        }
-    } catch (hcaptchaError) {
-        console.error('Error during hCaptcha verification request:', hcaptchaError);
-        if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
-            fs.unlinkSync(fileToCleanUp.filepath);
-        }
-        res.status(500).json({ message: 'Could not verify hCaptcha. Please try again later.' });
-        return;
-    }
-    // --- FINE: Verifica hCaptcha ---
+    // 📧 Invio email
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS
+      }
+    });
 
-    const transporter = nodemailer.createTransport({
-      service: 'gmail',
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-    });
+    const attachments = file ? [{
+      filename: file.originalFilename || 'allegato',
+      content: fs.readFileSync(file.filepath),
+      contentType: file.mimetype || 'application/octet-stream'
+    }] : [];
 
-    let attachments = [];
-    if (file) {
-      try {
-          const filePath = file.filepath;
-          if (!fs.existsSync(filePath)) {
-            throw new Error(`File not found at ${filePath}`);
-          }
-          const fileContent = fs.readFileSync(filePath);
-          attachments.push({
-              filename: file.originalFilename || 'attachment',
-              content: fileContent,
-              contentType: file.mimetype || 'application/octet-stream',
-          });
-      } catch (readErr) {
-          console.error('Error reading temporary file:', readErr);
-          res.status(500).json({ message: 'Error processing attachment', error: (readErr as Error).message });
-          return;
-      }
-    }
+    await transporter.sendMail({
+      from: process.env.EMAIL_USER,
+      to: 'tecnolife46@gmail.com',
+      replyTo: email,
+      subject: `Nuova richiesta da ${name} - PrintMaster 3D`,
+      html: `<p><strong>Nome:</strong> ${name}</p><p><strong>Email:</strong> ${email}</p><p>${message}</p>`,
+      attachments: attachments
+    });
 
-    const mailOptions = {
-      from: process.env.EMAIL_USER,
-      to: 'tecnolife46@gmail.com',
-      replyTo: email,
-      subject: `Nuova richiesta da ${name} - PrintMaster 3D`,
-      html: `
-        <p><strong>Nome:</strong> ${name}</p>
-        <p><strong>Email:</strong> ${email}</p>
-        <p><strong>Messaggio:</strong></p>
-        <p>${message}</p>
-      `,
-      attachments: attachments.length > 0 ? attachments : undefined,
-    };
+    res.status(200).json({ message: 'Messaggio inviato con successo!' });
 
-    await transporter.sendMail(mailOptions);
-    res.status(200).json({ message: 'Email sent successfully!' });
-
-  } catch (error: unknown) { 
-    console.error('Errore generale nel server API:', error);
-    if (
-        typeof error === 'object' &&
-        error !== null &&
-        'status' in error &&
-        'message' in error
-    ) {
-        const errObj = error as { status: number; message: string; error?: string };
-        res.status(errObj.status).json({ message: errObj.message, error: errObj.error });
-    } else if (error instanceof Error) {
-        res.status(500).json({ message: 'Error sending email', error: error.message });
-    } else {
-        res.status(500).json({ message: 'Error sending email', error: 'Unknown error' });
-    }
-  } finally {
-    if (fileToCleanUp && fileToCleanUp.filepath && fs.existsSync(fileToCleanUp.filepath)) {
-      fs.unlink(fileToCleanUp.filepath, (err) => {
-        if (err) console.error('Errore durante l\'eliminazione del file temporaneo nel finally:', err);
-      });
-    }
-  }
+  } catch (error: any) {
+    res.status(500).json({ message: 'Errore nel server', error: error.message });
+  } finally {
+    if (fileToCleanUp?.filepath && fs.existsSync(fileToCleanUp.filepath)) {
+      fs.unlink(fileToCleanUp.filepath, err => {
+        if (err) console.error('Errore cancellando il file:', err);
+      });
+    }
+  }
 };
 
 app.post('/api/send-email', sendEmailHandler);
 
 app.listen(port, () => {
-  console.log(`Server API listening on port ${port}`);
+  console.log(`Server in ascolto sulla porta ${port}`);
 });
