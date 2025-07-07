@@ -5,7 +5,7 @@ import nodemailer from 'nodemailer';
 import fs from 'fs';
 import dotenv from 'dotenv';
 import cors from 'cors';
-import axios from 'axios'; // <-- NUOVA IMPORTAZIONE per fare richieste HTTP
+import axios from 'axios'; // Importato per fare richieste HTTP
 
 dotenv.config({ path: '../.env.local' });
 
@@ -37,7 +37,6 @@ app.use(cors({
 }));
 // *** FINE MODIFICA CORS EFFETTUATA ***
 
-
 interface FormidableRequest extends Request {
   fields?: formidable.Fields;
   files?: formidable.Files;
@@ -54,7 +53,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
       }
 
       const form = formidable({
-        multitudes: false,
+        multiples: false, // <-- CORRETTO: era 'multitudes', ora è 'multiples'
         maxFileSize: 10 * 1024 * 1024,
         uploadDir: uploadDir,
         keepExtensions: true,
@@ -79,10 +78,9 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     // Recupera il token hCaptcha
     const hcaptchaToken = Array.isArray(data.fields.hcaptchaToken) ? data.fields.hcaptchaToken[0] : String(data.fields.hcaptchaToken || '');
 
-
     const file = Array.isArray(data.files.file)
-                    ? data.files.file[0]
-                    : (data.files.file !== undefined ? data.files.file as formidable.File : null);
+                     ? data.files.file[0]
+                     : (data.files.file !== undefined ? data.files.file as formidable.File : null);
     
     fileToCleanUp = file; // Imposta il file da pulire, se presente
 
@@ -192,7 +190,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     }
   } finally {
     // Assicurati che il file temporaneo venga sempre eliminato alla fine
-    if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+    if (fileToCleanUp && fileToCleanUp.filepath && fs.existsSync(fileToCleanUp.filepath)) { // Aggiunto controllo per fileToCleanUp.filepath
       fs.unlink(fileToCleanUp.filepath, (err) => {
         if (err) console.error('Errore durante l\'eliminazione del file temporaneo nel finally:', err);
       });
