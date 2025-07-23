@@ -1,4 +1,4 @@
-import express, { Request, Response, NextFunction, RequestHandler } from 'express';
+import express, { Request, Response, RequestHandler } from 'express';
 import formidable from 'formidable';
 import nodemailer from 'nodemailer';
 import fs from 'fs';
@@ -29,11 +29,11 @@ const port = process.env.PORT || 10000;
 
 // Inizializzazione di Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  apiVersion: '2025-06-30.basil', // Manteniamo la versione API che funziona per te
+  apiVersion: '2025-06-30.basil',
   typescript: true,
 });
 
-// Configurazione CORS (il tuo codice originale)
+// Configurazione CORS
 const allowedOrigins = [
   'http://localhost:8080',
   'http://localhost:5173',
@@ -59,22 +59,15 @@ app.use(cors({
   credentials: true
 }));
 
-// Aggiunta del middleware per il JSON di Stripe
 app.use(express.json());
 
-
-// ================================================================
-// === NUOVO ENDPOINT PER I PAGAMENTI (CORRETTO) ===
-// ================================================================
+// ENDPOINT PER I PAGAMENTI
 const createPaymentIntentHandler: RequestHandler = async (req, res) => {
   const { amount } = req.body;
-
   if (typeof amount !== 'number' || amount <= 0) {
-    // CORREZIONE: Non usare "return res.send(...)"
     res.status(400).send({ error: 'Importo non valido o mancante.' });
-    return; // Usa un 'return' vuoto per terminare l'esecuzione
+    return;
   }
-
   try {
     const paymentIntent = await stripe.paymentIntents.create({
       amount: Math.round(amount),
@@ -87,12 +80,54 @@ const createPaymentIntentHandler: RequestHandler = async (req, res) => {
     res.status(500).send({ error: errorMessage });
   }
 };
-
 app.post('/api/create-payment-intent', createPaymentIntentHandler);
-// ================================================================
 
+// ENDPOINT PER L'INVIO DELLE EMAIL DI CONFERMA ORDINE
+const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
+    const { customerName, customerEmail, orderSummary, orderTotal } = req.body;
+  
+    if (!customerName || !customerEmail || !orderSummary || !orderTotal) {
+      // --- CORREZIONE QUI ---
+      res.status(400).json({ message: 'Dati dell\'ordine mancanti.' });
+      return; // Usa un 'return' vuoto
+    }
+  
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+    });
+  
+    // Email per l'amministratore
+    const adminMailOptions = {
+      from: `"PrintMaster3D Ordini" <${process.env.EMAIL_USER}>`,
+      to: 'tecnolife46@gmail.com',
+      subject: `Nuovo Ordine Confermato da ${customerName}`,
+      html: `<h1>Nuovo Ordine Ricevuto!</h1><p><strong>Cliente:</strong> ${customerName}</p><p><strong>Email Cliente:</strong> ${customerEmail}</p><hr><h3>Riepilogo Ordine:</h3><pre>${orderSummary}</pre><hr><p><strong>TOTALE: ${orderTotal} €</strong></p>`,
+    };
+  
+    // Email per il cliente
+    const customerMailOptions = {
+      from: `"PrintMaster3D" <${process.env.EMAIL_USER}>`,
+      to: customerEmail,
+      subject: `Il tuo ordine PrintMaster3D è stato confermato!`,
+      html: `<h1>Grazie per il tuo ordine, ${customerName}!</h1><p>Abbiamo ricevuto il tuo ordine. Ecco un riepilogo:</p><hr><h3>Il tuo Riepilogo:</h3><pre>${orderSummary}</pre><hr><p><strong>TOTALE PAGATO: ${orderTotal} €</strong></p><br><p><strong>Nota:</strong> Potrai ritirare il tuo ordine presso la nostra sede in Via Scale Sant'Antonio, 59, Aci Catena (CT).</p><p>Ti contatteremo non appena sarà pronto per il ritiro.</p><p>Grazie,<br>Il team di PrintMaster3D</p>`,
+    };
+  
+    try {
+      await transporter.sendMail(adminMailOptions);
+      await transporter.sendMail(customerMailOptions);
+      res.status(200).json({ message: 'Email di conferma inviate con successo!' });
+    } catch (error) {
+      console.error("Errore invio email di conferma:", error);
+      res.status(500).json({ message: 'Errore durante l\'invio delle email.' });
+    }
+  };
+app.post('/api/send-order-confirmation', sendOrderConfirmationHandler);
 
-// Il tuo codice originale per l'invio email, completamente intatto.
+// ENDPOINT PER IL FORM DI CONTATTO
 const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Response) => {
   let fileToCleanUp: formidable.File | null = null;
 
@@ -151,11 +186,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
       return;
     }
 
-    // VERIFICA HCAPTCHA
     const HCAPTCHA_SECRET_KEY = process.env.HCAPTCHA_SECRET_KEY;
-    console.log('HCAPTCHA_SECRET_KEY exists:', !!HCAPTCHA_SECRET_KEY);
-    console.log('hcaptchaToken received:', hcaptchaToken);
-
     if (!HCAPTCHA_SECRET_KEY) {
       console.error('HCAPTCHA_SECRET_KEY is not defined in environment variables');
       if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
@@ -173,21 +204,16 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
           response: hcaptchaToken,
           remoteip: req.ip || ''
         }).toString(),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        }
+        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
       );
 
-      const { success, 'error-codes': errorCodes } = hcaptchaVerifyResponse.data as HCaptchaVerifyResponse;
+      const { success } = hcaptchaVerifyResponse.data;
 
       if (!success) {
-        console.error('hCaptcha verification failed:', errorCodes);
         if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
           fs.unlinkSync(fileToCleanUp.filepath);
         }
-        res.status(401).json({ message: 'hCaptcha verification failed. Please try again.', errorCodes });
+        res.status(401).json({ message: 'hCaptcha verification failed. Please try again.' });
         return;
       }
     } catch (hcaptchaError) {
@@ -210,11 +236,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     let attachments = [];
     if (file) {
       try {
-        const filePath = file.filepath;
-        if (!fs.existsSync(filePath)) {
-          throw new Error(`File not found at ${filePath}`);
-        }
-        const fileContent = fs.readFileSync(filePath);
+        const fileContent = fs.readFileSync(file.filepath);
         attachments.push({
           filename: file.originalFilename || 'attachment',
           content: fileContent,
@@ -232,12 +254,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
       to: 'tecnolife46@gmail.com',
       replyTo: email,
       subject: `Nuova richiesta da ${name} - PrintMaster 3D`,
-      html: `
-        <p><strong>Nome:</strong> ${name}</p>
-        <p><strong>Email:</strong> ${email}</p>
-        <p><strong>Messaggio:</strong></p>
-        <p>${message}</p>
-      `,
+      html: `<p><strong>Nome:</strong> ${name}</p><p><strong>Email:</strong> ${email}</p><p><strong>Messaggio:</strong></p><p>${message}</p>`,
       attachments: attachments.length > 0 ? attachments : undefined,
     };
 
@@ -246,12 +263,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
 
   } catch (error: unknown) {
     console.error('Errore generale nel server API:', error);
-    if (
-      typeof error === 'object' &&
-      error !== null &&
-      'status' in error &&
-      'message' in error
-    ) {
+    if (typeof error === 'object' && error !== null && 'status' in error && 'message' in error) {
       const errObj = error as { status: number; message: string; error?: string };
       res.status(errObj.status).json({ message: errObj.message, error: errObj.error });
     } else if (error instanceof Error) {
