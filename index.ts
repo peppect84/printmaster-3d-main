@@ -83,33 +83,35 @@ const createPaymentIntentHandler: RequestHandler = async (req, res) => {
 app.post('/api/create-payment-intent', createPaymentIntentHandler);
 
 
+// =================================================================================
 // === ENDPOINT CONFERMA ORDINE (AGGIORNATO CON I DATI COMPLETI DEL CLIENTE) ===
+// =================================================================================
 const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
-  // Ora riceviamo l'oggetto customerData completo
-  const { customerData, orderSummary, orderTotal } = req.body;
+    // Ora il frontend invia un oggetto 'customerData' che contiene tutto
+    const { customerData, orderSummary, orderTotal } = req.body;
 
-  if (!customerData || !orderSummary || !orderTotal) {
-    res.status(400).json({ message: 'Dati dell\'ordine mancanti.' });
-    return;
-  }
+    if (!customerData || !orderSummary || !orderTotal) {
+        res.status(400).json({ message: 'Dati dell\'ordine mancanti.' });
+        return;
+    }
 
-  const transporter = nodemailer.createTransport({
-    service: 'gmail',
-    auth: {
-      user: process.env.EMAIL_USER,
-      pass: process.env.EMAIL_PASS,
-    },
-  });
+    const transporter = nodemailer.createTransport({
+        service: 'gmail',
+        auth: {
+            user: process.env.EMAIL_USER,
+            pass: process.env.EMAIL_PASS,
+        },
+    });
 
-  // Formatta l'indirizzo per una migliore leggibilità
-  const fullAddress = `${customerData.street}, ${customerData.zip} ${customerData.city} (${customerData.province})`;
+    // Formatta l'indirizzo completo per una migliore leggibilità
+    const fullAddress = `${customerData.street}, ${customerData.zip} ${customerData.city} (${customerData.province})`;
 
-  // Email per l'amministratore (con tutti i nuovi dati)
-  const adminMailOptions = {
-    from: `"PrintMaster3D Ordini" <${process.env.EMAIL_USER}>`,
-    to: 'tecnolife46@gmail.com',
-    subject: `Nuovo Ordine Confermato da ${customerData.fullName}`,
-    html: `
+    // Email per l'amministratore (con tutti i nuovi dati)
+    const adminMailOptions = {
+        from: `"PrintMaster3D Ordini" <${process.env.EMAIL_USER}>`,
+        to: 'tecnolife46@gmail.com',
+        subject: `Nuovo Ordine Confermato da ${customerData.fullName}`,
+        html: `
       <h1>Nuovo Ordine Ricevuto!</h1>
       <p><strong>Cliente:</strong> ${customerData.fullName}</p>
       <p><strong>Email:</strong> ${customerData.email}</p>
@@ -121,14 +123,14 @@ const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
       <hr>
       <p style="font-size: 1.2em;"><strong>TOTALE: ${orderTotal} €</strong></p>
     `,
-  };
+    };
 
-  // Email per il cliente (con i dati rilevanti)
-  const customerMailOptions = {
-    from: `"PrintMaster3D" <${process.env.EMAIL_USER}>`,
-    to: customerData.email,
-    subject: `Il tuo ordine PrintMaster3D è stato confermato!`,
-    html: `
+    // Email per il cliente (con i dati rilevanti)
+    const customerMailOptions = {
+        from: `"PrintMaster3D" <${process.env.EMAIL_USER}>`,
+        to: customerData.email,
+        subject: `Il tuo ordine PrintMaster3D è stato confermato!`,
+        html: `
       <h1>Grazie per il tuo ordine, ${customerData.fullName}!</h1>
       <p>Abbiamo ricevuto il tuo ordine e lo stiamo elaborando. Ecco un riepilogo:</p>
       <hr>
@@ -141,18 +143,19 @@ const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
       <p>Ti contatteremo al numero <strong>${customerData.phone}</strong> non appena sarà pronto per il ritiro.</p>
       <p>Grazie,<br>Il team di PrintMaster3D</p>
     `,
-  };
+    };
 
-  try {
-    await transporter.sendMail(adminMailOptions);
-    await transporter.sendMail(customerMailOptions);
-    res.status(200).json({ message: 'Email di conferma inviate con successo!' });
-  } catch (error) {
-    console.error("Errore invio email di conferma:", error);
-    res.status(500).json({ message: 'Errore durante l\'invio delle email.' });
-  }
+    try {
+        await transporter.sendMail(adminMailOptions);
+        await transporter.sendMail(customerMailOptions);
+        res.status(200).json({ message: 'Email di conferma inviate con successo!' });
+    } catch (error) {
+        console.error("Errore invio email di conferma:", error);
+        res.status(500).json({ message: 'Errore durante l\'invio delle email.' });
+    }
 };
 app.post('/api/send-order-confirmation', sendOrderConfirmationHandler);
+// =================================================================================
 
 
 // ENDPOINT PER IL FORM DI CONTATTO (il tuo codice originale, intatto)
