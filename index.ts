@@ -61,7 +61,16 @@ app.use(cors({
 
 app.use(express.json());
 
-// ENDPOINT PER I PAGAMENTI (il tuo codice originale)
+// ================================================================
+// === NUOVA ROTTA DI HEALTH CHECK PER UPTIMEROBOT ===
+// ================================================================
+app.get('/', (req: Request, res: Response) => {
+  res.status(200).send('API Server for PrintMaster3D is running correctly.');
+});
+// ================================================================
+
+
+// ENDPOINT PER I PAGAMENTI
 const createPaymentIntentHandler: RequestHandler = async (req, res) => {
   const { amount } = req.body;
   if (typeof amount !== 'number' || amount <= 0) {
@@ -82,19 +91,13 @@ const createPaymentIntentHandler: RequestHandler = async (req, res) => {
 };
 app.post('/api/create-payment-intent', createPaymentIntentHandler);
 
-
-// =================================================================================
-// === ENDPOINT CONFERMA ORDINE (AGGIORNATO CON I DATI COMPLETI DEL CLIENTE) ===
-// =================================================================================
+// ENDPOINT CONFERMA ORDINE
 const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
-    // Ora il frontend invia un oggetto 'customerData' che contiene tutto
     const { customerData, orderSummary, orderTotal } = req.body;
-
     if (!customerData || !orderSummary || !orderTotal) {
         res.status(400).json({ message: 'Dati dell\'ordine mancanti.' });
         return;
     }
-
     const transporter = nodemailer.createTransport({
         service: 'gmail',
         auth: {
@@ -102,49 +105,19 @@ const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
             pass: process.env.EMAIL_PASS,
         },
     });
-
-    // Formatta l'indirizzo completo per una migliore leggibilità
     const fullAddress = `${customerData.street}, ${customerData.zip} ${customerData.city} (${customerData.province})`;
-
-    // Email per l'amministratore (con tutti i nuovi dati)
     const adminMailOptions = {
         from: `"PrintMaster3D Ordini" <${process.env.EMAIL_USER}>`,
         to: 'tecnolife46@gmail.com',
         subject: `Nuovo Ordine Confermato da ${customerData.fullName}`,
-        html: `
-      <h1>Nuovo Ordine Ricevuto!</h1>
-      <p><strong>Cliente:</strong> ${customerData.fullName}</p>
-      <p><strong>Email:</strong> ${customerData.email}</p>
-      <p><strong>Telefono:</strong> ${customerData.phone}</p>
-      <p><strong>Indirizzo di Fatturazione:</strong> ${fullAddress}</p>
-      <hr>
-      <h3>Riepilogo Ordine:</h3>
-      <pre style="font-family: monospace; white-space: pre-wrap;">${orderSummary}</pre>
-      <hr>
-      <p style="font-size: 1.2em;"><strong>TOTALE: ${orderTotal} €</strong></p>
-    `,
+        html: `<h1>Nuovo Ordine Ricevuto!</h1><p><strong>Cliente:</strong> ${customerData.fullName}</p><p><strong>Email:</strong> ${customerData.email}</p><p><strong>Telefono:</strong> ${customerData.phone}</p><p><strong>Indirizzo di Fatturazione:</strong> ${fullAddress}</p><hr><h3>Riepilogo Ordine:</h3><pre style="font-family: monospace; white-space: pre-wrap;">${orderSummary}</pre><hr><p style="font-size: 1.2em;"><strong>TOTALE: ${orderTotal} €</strong></p>`,
     };
-
-    // Email per il cliente (con i dati rilevanti)
     const customerMailOptions = {
         from: `"PrintMaster3D" <${process.env.EMAIL_USER}>`,
         to: customerData.email,
         subject: `Il tuo ordine PrintMaster3D è stato confermato!`,
-        html: `
-      <h1>Grazie per il tuo ordine, ${customerData.fullName}!</h1>
-      <p>Abbiamo ricevuto il tuo ordine e lo stiamo elaborando. Ecco un riepilogo:</p>
-      <hr>
-      <h3>Il tuo Riepilogo:</h3>
-      <pre style="font-family: monospace; white-space: pre-wrap;">${orderSummary}</pre>
-      <hr>
-      <p style="font-size: 1.2em;"><strong>TOTALE PAGATO: ${orderTotal} €</strong></p>
-      <br>
-      <p><strong>Nota importante:</strong> Potrai ritirare il tuo ordine presso la nostra sede in Via Scale Sant'Antonio, 59, Aci Catena (CT).</p>
-      <p>Ti contatteremo al numero <strong>${customerData.phone}</strong> non appena sarà pronto per il ritiro.</p>
-      <p>Grazie,<br>Il team di PrintMaster3D</p>
-    `,
+        html: `<h1>Grazie per il tuo ordine, ${customerData.fullName}!</h1><p>Abbiamo ricevuto il tuo ordine e lo stiamo elaborando. Ecco un riepilogo:</p><hr><h3>Il tuo Riepilogo:</h3><pre style="font-family: monospace; white-space: pre-wrap;">${orderSummary}</pre><hr><p style="font-size: 1.2em;"><strong>TOTALE PAGATO: ${orderTotal} €</strong></p><br><p><strong>Nota importante:</strong> Potrai ritirare il tuo ordine presso la nostra sede in Via Scale Sant'Antonio, 59, Aci Catena (CT).</p><p>Ti contatteremo al numero <strong>${customerData.phone}</strong> non appena sarà pronto per il ritiro.</p><p>Grazie,<br>Il team di PrintMaster3D</p>`,
     };
-
     try {
         await transporter.sendMail(adminMailOptions);
         await transporter.sendMail(customerMailOptions);
@@ -155,13 +128,11 @@ const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
     }
 };
 app.post('/api/send-order-confirmation', sendOrderConfirmationHandler);
-// =================================================================================
 
 
 // ENDPOINT PER IL FORM DI CONTATTO (il tuo codice originale, intatto)
 const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Response) => {
   let fileToCleanUp: formidable.File | null = null;
-
   try {
     const data: { fields: formidable.Fields; files: formidable.Files } = await new Promise((resolve, reject) => {
       const uploadDir = './temp_uploads';
