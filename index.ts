@@ -29,7 +29,8 @@ const port = process.env.PORT || 10000;
 
 // Inizializzazione di Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  apiVersion: '2024-06-20', // Utilizzo una versione API stabile
+  // CORREZIONE: Riportata alla tua versione originale che è quella corretta per la tua libreria
+  apiVersion: '2025-06-30.basil',
   typescript: true,
 });
 
@@ -71,10 +72,9 @@ app.get('/', (req: Request, res: Response) => {
 
 
 // ================================================================
-// === ENDPOINT PER LA VERIFICA DEL COUPON (NUOVO) ===
+// === ENDPOINT PER LA VERIFICA DEL COUPON ===
 // ================================================================
 const validateCouponHandler: RequestHandler = async (req, res) => {
-    // Il frontend invierà il codice del coupon e il totale originale del carrello
     const { couponCode, originalAmount } = req.body;
 
     if (!couponCode || typeof originalAmount !== 'number' || originalAmount <= 0) {
@@ -82,9 +82,8 @@ const validateCouponHandler: RequestHandler = async (req, res) => {
     }
 
     try {
-        // Cerca i "Promotion Codes" attivi che corrispondono al codice fornito dall'utente.
         const promoCodes = await stripe.promotionCodes.list({
-            code: couponCode.toUpperCase(), // I codici non sono case-sensitive su Stripe, ma è buona norma normalizzarli
+            code: couponCode.toUpperCase(),
             active: true,
             limit: 1,
         });
@@ -95,7 +94,6 @@ const validateCouponHandler: RequestHandler = async (req, res) => {
 
         const coupon = promoCodes.data[0].coupon;
 
-        // Calcola lo sconto
         let discount = 0;
         if (coupon.percent_off) {
             discount = originalAmount * (coupon.percent_off / 100);
@@ -103,10 +101,7 @@ const validateCouponHandler: RequestHandler = async (req, res) => {
             discount = coupon.amount_off;
         }
 
-        // Assicurati che il totale non vada sotto zero
         const newTotal = Math.max(0, originalAmount - discount);
-
-        // Arrotonda gli importi per evitare problemi con i decimali
         const finalDiscount = Math.round(discount);
         const finalNewTotal = Math.round(newTotal);
 
@@ -125,18 +120,14 @@ const validateCouponHandler: RequestHandler = async (req, res) => {
 app.post('/api/validate-coupon', validateCouponHandler);
 
 
-// ENDPOINT PER I PAGAMENTI (MODIFICATO)
+// ENDPOINT PER I PAGAMENTI
 const createPaymentIntentHandler: RequestHandler = async (req, res) => {
-  // IMPORTANTE: Ora 'amount' sarà l'importo finale, già scontato dal frontend
-  // dopo aver chiamato /api/validate-coupon
   const { amount } = req.body;
-  if (typeof amount !== 'number' || amount < 0) { // Permettiamo anche importo 0
+  if (typeof amount !== 'number' || amount < 0) {
     res.status(400).send({ error: 'Importo non valido o mancante.' });
     return;
   }
   
-  // Se un coupon rende l'ordine gratuito, non serve un PaymentIntent.
-  // Puoi inviare una risposta speciale per gestire questo caso sul frontend.
   if (amount === 0) {
       res.send({ clientSecret: null, status: 'succeeded' });
       return;
@@ -144,9 +135,10 @@ const createPaymentIntentHandler: RequestHandler = async (req, res) => {
 
   try {
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(amount), // L'importo è già scontato
+      amount: Math.round(amount),
       currency: 'eur',
       automatic_payment_methods: { enabled: true },
+      // CORREZIONE: La proprietà 'allow_promotion_codes' è stata rimossa perché non è valida qui.
     });
     res.send({ clientSecret: paymentIntent.client_secret });
   } catch (error: unknown) {
@@ -195,7 +187,7 @@ const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
 app.post('/api/send-order-confirmation', sendOrderConfirmationHandler);
 
 
-// ENDPOINT PER IL FORM DI CONTATTO (il tuo codice originale, intatto)
+// ENDPOINT PER IL FORM DI CONTATTO
 const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Response) => {
   let fileToCleanUp: formidable.File | null = null;
   try {
