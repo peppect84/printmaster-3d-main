@@ -29,7 +29,7 @@ const port = process.env.PORT || 10000;
 
 // Inizializzazione di Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  apiVersion: '2025-06-30.basil',
+  apiVersion: '2024-06-20', // Utilizzo una versione API stabile
   typescript: true,
 });
 
@@ -70,16 +70,81 @@ app.get('/', (req: Request, res: Response) => {
 // ================================================================
 
 
-// ENDPOINT PER I PAGAMENTI
+// ================================================================
+// === ENDPOINT PER LA VERIFICA DEL COUPON (NUOVO) ===
+// ================================================================
+const validateCouponHandler: RequestHandler = async (req, res) => {
+    // Il frontend invierà il codice del coupon e il totale originale del carrello
+    const { couponCode, originalAmount } = req.body;
+
+    if (!couponCode || typeof originalAmount !== 'number' || originalAmount <= 0) {
+        return res.status(400).send({ error: 'Codice coupon o importo originale mancante o non valido.' });
+    }
+
+    try {
+        // Cerca i "Promotion Codes" attivi che corrispondono al codice fornito dall'utente.
+        const promoCodes = await stripe.promotionCodes.list({
+            code: couponCode.toUpperCase(), // I codici non sono case-sensitive su Stripe, ma è buona norma normalizzarli
+            active: true,
+            limit: 1,
+        });
+
+        if (promoCodes.data.length === 0) {
+            return res.status(404).send({ error: 'Coupon non valido o scaduto.' });
+        }
+
+        const coupon = promoCodes.data[0].coupon;
+
+        // Calcola lo sconto
+        let discount = 0;
+        if (coupon.percent_off) {
+            discount = originalAmount * (coupon.percent_off / 100);
+        } else if (coupon.amount_off) {
+            discount = coupon.amount_off;
+        }
+
+        // Assicurati che il totale non vada sotto zero
+        const newTotal = Math.max(0, originalAmount - discount);
+
+        // Arrotonda gli importi per evitare problemi con i decimali
+        const finalDiscount = Math.round(discount);
+        const finalNewTotal = Math.round(newTotal);
+
+        res.status(200).json({
+            isValid: true,
+            discount: finalDiscount,
+            newTotal: finalNewTotal,
+            couponId: coupon.id
+        });
+
+    } catch (error: unknown) {
+        const errorMessage = error instanceof Error ? error.message : 'Errore sconosciuto';
+        res.status(500).send({ error: `Errore nella validazione del coupon: ${errorMessage}` });
+    }
+};
+app.post('/api/validate-coupon', validateCouponHandler);
+
+
+// ENDPOINT PER I PAGAMENTI (MODIFICATO)
 const createPaymentIntentHandler: RequestHandler = async (req, res) => {
+  // IMPORTANTE: Ora 'amount' sarà l'importo finale, già scontato dal frontend
+  // dopo aver chiamato /api/validate-coupon
   const { amount } = req.body;
-  if (typeof amount !== 'number' || amount <= 0) {
+  if (typeof amount !== 'number' || amount < 0) { // Permettiamo anche importo 0
     res.status(400).send({ error: 'Importo non valido o mancante.' });
     return;
   }
+  
+  // Se un coupon rende l'ordine gratuito, non serve un PaymentIntent.
+  // Puoi inviare una risposta speciale per gestire questo caso sul frontend.
+  if (amount === 0) {
+      res.send({ clientSecret: null, status: 'succeeded' });
+      return;
+  }
+
   try {
     const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(amount),
+      amount: Math.round(amount), // L'importo è già scontato
       currency: 'eur',
       automatic_payment_methods: { enabled: true },
     });
