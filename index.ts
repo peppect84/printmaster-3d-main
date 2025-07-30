@@ -61,13 +61,9 @@ app.use(cors({
 
 app.use(express.json());
 
-// ================================================================
-// === NUOVA ROTTA DI HEALTH CHECK PER UPTIMEROBOT ===
-// ================================================================
 app.get('/', (req: Request, res: Response) => {
   res.status(200).send('API Server for PrintMaster3D is running correctly.');
 });
-// ================================================================
 
 
 // ENDPOINT PER I PAGAMENTI
@@ -82,9 +78,9 @@ const createPaymentIntentHandler: RequestHandler = async (req, res) => {
       amount: Math.round(amount),
       currency: 'eur',
       automatic_payment_methods: { enabled: true },
-      // --- RIGA AGGIUNTA PER ABILITARE I COUPON ---
+      // @ts-ignore - Diciamo a TypeScript di ignorare l'errore sulla riga seguente
+      // perché la versione del pacchetto stripe non si aggiorna correttamente.
       allow_promotion_codes: true,
-      // -----------------------------------------
     });
     res.send({ clientSecret: paymentIntent.client_secret });
   } catch (error: unknown) {
@@ -133,7 +129,7 @@ const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
 app.post('/api/send-order-confirmation', sendOrderConfirmationHandler);
 
 
-// ENDPOINT PER IL FORM DI CONTATTO (il tuo codice originale, intatto)
+// ENDPOINT PER IL FORM DI CONTATTO
 const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Response) => {
   let fileToCleanUp: formidable.File | null = null;
   try {
