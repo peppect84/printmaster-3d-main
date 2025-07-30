@@ -82,6 +82,9 @@ const createPaymentIntentHandler: RequestHandler = async (req, res) => {
       amount: Math.round(amount),
       currency: 'eur',
       automatic_payment_methods: { enabled: true },
+      // --- RIGA AGGIUNTA PER ABILITARE I COUPON ---
+      allow_promotion_codes: true,
+      // -----------------------------------------
     });
     res.send({ clientSecret: paymentIntent.client_secret });
   } catch (error: unknown) {
