@@ -27,13 +27,14 @@ const port = process.env.PORT || 10000;
 
 // Inizializzazione di Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  apiVersion: '2024-06-20', // Utilizzo una versione stabile e recente
+  // ================================================================
+  // === CORREZIONE: Riportata alla tua versione originale per fixare l'errore
+  // ================================================================
+  apiVersion: '2025-06-30.basil',
   typescript: true,
 });
 
-// ================================================================
-// === 1. AGGIUNTA NUOVO DOMINIO PER CORS ==========================
-// ================================================================
+// Configurazione CORS (con il tuo nuovo dominio già aggiunto)
 const allowedOrigins = [
   'http://localhost:8080',
   'http://localhost:5173',
@@ -42,7 +43,7 @@ const allowedOrigins = [
   'https://printmaster3d.netlify.app',
   'https://printmaster3d.it',
   'https://www.printmaster3d.it',
-  'https://licciardellogiuseppept.netlify.app' // <-- NUOVO DOMINIO AGGIUNTO QUI
+  'https://licciardellogiuseppept.netlify.app' // Il tuo nuovo dominio
 ];
 
 app.use(cors({
@@ -64,7 +65,7 @@ app.use(express.json());
 
 // ROTTA DI HEALTH CHECK
 app.get('/', (req: Request, res: Response) => {
-  res.status(200).send('API Server for PrintMaster3D is running correctly.');
+  res.status(200).send('API Server is running correctly.');
 });
 
 
@@ -213,12 +214,8 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     const email = Array.isArray(data.fields.email) ? data.fields.email[0] : String(data.fields.email || '');
     const message = Array.isArray(data.fields.message) ? data.fields.message[0] : String(data.fields.message || '');
     const hcaptchaToken = Array.isArray(data.fields.hcaptchaToken) ? data.fields.hcaptchaToken[0] : String(data.fields.hcaptchaToken || '');
-
-    // ================================================================
-    // === 2. ESTRAZIONE CAMPO OGGETTO (OPZIONALE) ====================
-    // ================================================================
     const subject = Array.isArray(data.fields.subject) ? data.fields.subject[0] : String(data.fields.subject || '');
-
+    
     const file = Array.isArray(data.files.file)
       ? data.files.file[0]
       : (data.files.file !== undefined ? data.files.file as formidable.File : null);
@@ -300,27 +297,21 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
         return;
       }
     }
-
-    // ================================================================
-    // === 3. PERSONALIZZAZIONE OGGETTO EMAIL IN BASE AL SITO ========
-    // ================================================================
+    
     const origin = req.headers.origin || '';
-    let emailSubject = `Nuova richiesta da ${name}`; // Oggetto di default
+    let emailSubject = `Nuova richiesta da ${name}`; 
 
     if (origin.includes('licciardellogiuseppept')) {
       emailSubject = `Nuovo Contatto da ${name} (Sito PT)`;
     } else if (origin.includes('printmaster3d')) {
       emailSubject = `Nuova richiesta da ${name} - PrintMaster 3D`;
     }
-
-    // ================================================================
-    // === 4. AGGIUNTA DELL'OGGETTO NEL CORPO DELL'EMAIL (SE PRESENTE)
-    // ================================================================
+    
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: 'tecnolife46@gmail.com',
       replyTo: email,
-      subject: emailSubject, // Oggetto email dinamico
+      subject: emailSubject,
       html: `
         <p><strong>Nome:</strong> ${name}</p>
         <p><strong>Email:</strong> ${email}</p>
