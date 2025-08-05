@@ -27,9 +27,6 @@ const port = process.env.PORT || 10000;
 
 // Inizializzazione di Stripe
 const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  // ================================================================
-  // === CORREZIONE: Riportata alla tua versione originale per fixare l'errore
-  // ================================================================
   apiVersion: '2025-06-30.basil',
   typescript: true,
 });
@@ -43,7 +40,7 @@ const allowedOrigins = [
   'https://printmaster3d.netlify.app',
   'https://printmaster3d.it',
   'https://www.printmaster3d.it',
-  'https://licciardellogiuseppept.netlify.app' // Il tuo nuovo dominio
+  'https://licciardellogiuseppept.netlify.app' // <-- NUOVO DOMINIO AGGIUNTO
 ];
 
 app.use(cors({
@@ -65,7 +62,7 @@ app.use(express.json());
 
 // ROTTA DI HEALTH CHECK
 app.get('/', (req: Request, res: Response) => {
-  res.status(200).send('API Server is running correctly.');
+  res.status(200).send('API Server for PrintMaster3D is running correctly.');
 });
 
 
@@ -182,7 +179,7 @@ const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
 app.post('/api/send-order-confirmation', sendOrderConfirmationHandler);
 
 
-// ENDPOINT PER IL FORM DI CONTATTO
+// ENDPOINT PER IL FORM DI CONTATTO (PER PRINTMASTER3D, CON HCAPTCHA)
 const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Response) => {
   let fileToCleanUp: formidable.File | null = null;
   try {
@@ -214,8 +211,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     const email = Array.isArray(data.fields.email) ? data.fields.email[0] : String(data.fields.email || '');
     const message = Array.isArray(data.fields.message) ? data.fields.message[0] : String(data.fields.message || '');
     const hcaptchaToken = Array.isArray(data.fields.hcaptchaToken) ? data.fields.hcaptchaToken[0] : String(data.fields.hcaptchaToken || '');
-    const subject = Array.isArray(data.fields.subject) ? data.fields.subject[0] : String(data.fields.subject || '');
-    
+
     const file = Array.isArray(data.files.file)
       ? data.files.file[0]
       : (data.files.file !== undefined ? data.files.file as formidable.File : null);
@@ -297,28 +293,13 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
         return;
       }
     }
-    
-    const origin = req.headers.origin || '';
-    let emailSubject = `Nuova richiesta da ${name}`; 
 
-    if (origin.includes('licciardellogiuseppept')) {
-      emailSubject = `Nuovo Contatto da ${name} (Sito PT)`;
-    } else if (origin.includes('printmaster3d')) {
-      emailSubject = `Nuova richiesta da ${name} - PrintMaster 3D`;
-    }
-    
     const mailOptions = {
       from: process.env.EMAIL_USER,
       to: 'tecnolife46@gmail.com',
       replyTo: email,
-      subject: emailSubject,
-      html: `
-        <p><strong>Nome:</strong> ${name}</p>
-        <p><strong>Email:</strong> ${email}</p>
-        ${subject ? `<p><strong>Oggetto:</strong> ${subject}</p>` : ''}
-        <p><strong>Messaggio:</strong></p>
-        <p>${message}</p>
-      `,
+      subject: `Nuova richiesta da ${name} - PrintMaster 3D`,
+      html: `<p><strong>Nome:</strong> ${name}</p><p><strong>Email:</strong> ${email}</p><p><strong>Messaggio:</strong></p><p>${message}</p>`,
       attachments: attachments.length > 0 ? attachments : undefined,
     };
 
@@ -343,8 +324,52 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     }
   }
 };
-
 app.post('/api/send-email', sendEmailHandler);
+
+// =======================================================================
+// === NUOVO ENDPOINT PER IL SITO PT (SENZA HCAPTCHA) ======================
+// =======================================================================
+const sendEmailPtHandler: RequestHandler = async (req: Request, res: Response) => {
+  const { nome, email, oggetto, messaggio } = req.body;
+
+  if (!nome || !email || !messaggio) {
+    return res.status(400).json({ message: 'Nome, email e messaggio sono obbligatori.' });
+  }
+
+  const transporter = nodemailer.createTransport({
+    service: 'gmail',
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+  });
+
+  const mailOptions = {
+    from: process.env.EMAIL_USER,
+    to: 'tecnolife46@gmail.com',
+    replyTo: email,
+    subject: `Nuovo Contatto da ${nome} (Sito PT)`,
+    html: `
+      <h1>Nuovo Contatto dal Sito Personal Trainer</h1>
+      <p><strong>Nome:</strong> ${nome}</p>
+      <p><strong>Email:</strong> ${email}</p>
+      ${oggetto ? `<p><strong>Oggetto:</strong> ${oggetto}</p>` : ''}
+      <hr>
+      <p><strong>Messaggio:</strong></p>
+      <p>${messaggio.replace(/\n/g, '<br>')}</p>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    res.status(200).json({ message: 'Email inviata con successo!' });
+  } catch (error) {
+    console.error('Errore invio email dal sito PT:', error);
+    res.status(500).json({ message: 'Errore durante l\'invio dell\'email.' });
+  }
+};
+app.post('/api/send-email-pt', sendEmailPtHandler);
+// =======================================================================
 
 app.listen(port, () => {
   console.log(`Server API listening on port ${port}`);
