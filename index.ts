@@ -350,7 +350,7 @@ const sendEmailPtHandler: RequestHandler = async (req: Request, res: Response) =
     replyTo: email,
     subject: `Nuovo Contatto da ${nome} (Sito PT)`,
     html: `
-      <h1>Nuovo Contatto dal Sito Personal Trainer</h1>
+      <h1>Nuovo Contatto su LicciardelloG. Personal Trainer</h1>
       <p><strong>Nome:</strong> ${nome}</p>
       <p><strong>Email:</strong> ${email}</p>
       ${oggetto ? `<p><strong>Oggetto:</strong> ${oggetto}</p>` : ''}
