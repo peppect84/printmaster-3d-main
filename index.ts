@@ -41,7 +41,7 @@ const allowedOrigins = [
   'https://printmaster3d.it',
   'https://www.printmaster3d.it',
   'https://licciardellogiuseppept.netlify.app',
-  'https://ptlicciardellog.netlify.app/'
+  'https://ptlicciardellog.netlify.app'
 ];
 
 app.use(cors({
