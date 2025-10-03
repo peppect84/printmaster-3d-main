@@ -9,7 +9,7 @@ import sgMail from '@sendgrid/mail';
 
 dotenv.config();
 
-// SendGrid setup
+const SENDGRID_FROM_EMAIL = 'tecnolife46@gmail.com';
 sgMail.setApiKey(process.env.SENDGRID_API_KEY || '');
 
 interface FormidableRequest extends Request {
@@ -40,7 +40,8 @@ const allowedOrigins = [
   'https://printmaster3d.netlify.app',
   'https://printmaster3d.it',
   'https://www.printmaster3d.it',
-  'https://licciardellogiuseppept.netlify.app'
+  'https://licciardellogiuseppept.netlify.app',
+  'https://ptlicciardellog.netlify.app/'
 ];
 
 app.use(cors({
@@ -64,6 +65,7 @@ app.get('/', (req: Request, res: Response) => {
   res.status(200).send('API Server for PrintMaster3D is running correctly.');
 });
 
+// ---- COUPON ----
 const validateCouponHandler: RequestHandler = async (req, res) => {
   const { couponCode, originalAmount } = req.body;
   if (!couponCode || typeof originalAmount !== 'number' || originalAmount <= 0) {
@@ -103,6 +105,7 @@ const validateCouponHandler: RequestHandler = async (req, res) => {
 };
 app.post('/api/validate-coupon', validateCouponHandler);
 
+// ---- PAGAMENTO ----
 const createPaymentIntentHandler: RequestHandler = async (req, res) => {
   const { amount } = req.body;
   if (typeof amount !== 'number' || amount < 0) {
@@ -127,7 +130,7 @@ const createPaymentIntentHandler: RequestHandler = async (req, res) => {
 };
 app.post('/api/create-payment-intent', createPaymentIntentHandler);
 
-// ENDPOINT CONFERMA ORDINE [SendGrid]
+// ---- ORDINE ----
 const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
   const { customerData, orderSummary, orderTotal } = req.body;
   if (!customerData || !orderSummary || !orderTotal) {
@@ -138,7 +141,7 @@ const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
 
   const adminMsg = {
     to: 'tecnolife46@gmail.com',
-    from: process.env.SENDGRID_FROM_EMAIL,
+    from: SENDGRID_FROM_EMAIL,
     subject: `Nuovo Ordine Confermato da ${customerData.fullName}`,
     html: `<h1>Nuovo Ordine Ricevuto!</h1>
            <p><strong>Cliente:</strong> ${customerData.fullName}</p>
@@ -153,7 +156,7 @@ const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
   };
   const customerMsg = {
     to: customerData.email,
-    from: process.env.SENDGRID_FROM_EMAIL,
+    from: SENDGRID_FROM_EMAIL,
     subject: 'Il tuo ordine PrintMaster3D è stato confermato!',
     html: `<h1>Grazie per il tuo ordine, ${customerData.fullName}!</h1>
           <p>Abbiamo ricevuto il tuo ordine e lo stiamo elaborando. Ecco un riepilogo:</p>
@@ -177,7 +180,7 @@ const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
 };
 app.post('/api/send-order-confirmation', sendOrderConfirmationHandler);
 
-// ENDPOINT FORM CONTATTO (con HCAPTCHA)
+// ---- CONTATTO PrintMaster3D CON HCAPTCHA E ALLEGATI ----
 const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Response) => {
   let fileToCleanUp: formidable.File | null = null;
   try {
@@ -274,7 +277,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
 
     const msg = {
       to: 'tecnolife46@gmail.com',
-      from: process.env.SENDGRID_FROM_EMAIL,
+      from: SENDGRID_FROM_EMAIL,
       replyTo: email,
       subject: `Nuova richiesta da ${name} - PrintMaster 3D`,
       html: `<p><strong>Nome:</strong> ${name}</p>
@@ -307,7 +310,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
 };
 app.post('/api/send-email', sendEmailHandler);
 
-// === ENDPOINT SENZA HCAPTCHA (PT) [SendGrid]
+// ---- CONTATTO PT ----
 const sendEmailPtHandler: RequestHandler = async (req: Request, res: Response) => {
   const { nome, email, oggetto, messaggio } = req.body;
   if (!nome || !email || !messaggio) {
@@ -315,7 +318,7 @@ const sendEmailPtHandler: RequestHandler = async (req: Request, res: Response) =
   }
   const msg = {
     to: 'tecnolife46@gmail.com',
-    from: process.env.SENDGRID_FROM_EMAIL,
+    from: SENDGRID_FROM_EMAIL,
     replyTo: email,
     subject: `Nuovo Contatto da ${nome} (Sito PT)`,
     html: `<h1>Nuovo Contatto su LicciardelloG. Personal Trainer</h1>
@@ -339,4 +342,3 @@ app.post('/api/send-email-pt', sendEmailPtHandler);
 app.listen(port, () => {
   console.log(`Server API listening on port ${port}`);
 });
-
