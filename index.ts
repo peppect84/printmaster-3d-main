@@ -1,17 +1,24 @@
-import express, { Request, Response, RequestHandler } from 'express';
+import express, { Request, Response, NextFunction, RequestHandler } from 'express';
 import formidable from 'formidable';
 import fs from 'fs';
+import path from 'path';
+import dotenv from 'dotenv';
 import cors from 'cors';
 import axios from 'axios';
-import dotenv from 'dotenv';
-import Stripe from 'stripe';
-import sgMail from '@sendgrid/mail';
 
+dotenv.config({ path: path.resolve(__dirname, '../.env.local') });
 dotenv.config();
 
-const SENDGRID_FROM_EMAIL = 'tecnolife46@gmail.com';
-sgMail.setApiKey(process.env.SENDGRID_API_KEY || '');
+const missingEnv = ['RESEND_API_KEY', 'HCAPTCHA_SECRET_KEY'].filter((key) => !process.env[key]);
+if (missingEnv.length > 0) {
+  console.warn('Missing required environment variables:', missingEnv.join(', '));
+}
 
+if (!process.env.RESEND_FROM_EMAIL && !process.env.RESEND_FROM_KEY && !process.env.EMAIL_USER) {
+  console.warn('Resend from email is not configured. Set RESEND_FROM_EMAIL, RESEND_FROM_KEY or EMAIL_USER.');
+}
+
+// DEFINIZIONI INTERFACCE
 interface FormidableRequest extends Request {
   fields?: formidable.Fields;
   files?: formidable.Files;
@@ -21,180 +28,61 @@ interface HCaptchaVerifyResponse {
   success: boolean;
   challenge_ts?: string;
   hostname?: string;
-  'error-codes'?: string[];
+  'error-codes'?: string[]; // Opzionale, se ci sono codici di errore
 }
 
 const app = express();
 const port = process.env.PORT || 10000;
 
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY || '', {
-  apiVersion: '2025-06-30.basil',
-  typescript: true,
-});
-
+// Configurazione CORS
 const allowedOrigins = [
   'http://localhost:8080',
   'http://localhost:5173',
-  'http://localhost:4000',
+  'http://localhost:4000', // AGGIUNTO: Per lo sviluppo locale
   'http://localhost:4001',
-  'https://printmaster3d.netlify.app',
-  'https://printmaster3d.it',
-  'https://www.printmaster3d.it',
-  'https://licciardellogiuseppept.netlify.app',
-  'https://ptlicciardellog.netlify.app'
+  'https://printmaster3d.netlify.app', // Mantienilo se lo usi
+  'https://www.printmaster3d.netlify.app',
+  'https://printmaster3d.it', // Dominio senza www
+  'https://www.printmaster3d.it', // AGGIUNTO: Dominio con www
+  'https://printmaster-3d-main.onrender.com' // Se usi il server Render sullo stesso dominio
 ];
 
 app.use(cors({
   origin: function (origin, callback) {
-    if (!origin || allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
+    // Permetti richieste senza 'origin' (es. da Postman o file locali)
+    if (!origin) return callback(null, true); 
+    if (allowedOrigins.indexOf(origin) === -1) {
       const msg = `The CORS policy for this site does not allow access from the specified Origin: ${origin}.`;
       console.error(msg);
-      callback(new Error(msg), false);
+      return callback(new Error(msg), false);
     }
+    return callback(null, true);
   },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
   credentials: true
 }));
 
-app.use(express.json());
-
-app.get('/', (req: Request, res: Response) => {
-  res.status(200).send('API Server for PrintMaster3D is running correctly.');
-});
-
-// ---- COUPON ----
-const validateCouponHandler: RequestHandler = async (req, res) => {
-  const { couponCode, originalAmount } = req.body;
-  if (!couponCode || typeof originalAmount !== 'number' || originalAmount <= 0) {
-    return res.status(400).send({ error: 'Codice coupon o importo originale mancante o non valido.' });
-  }
-  try {
-    const promoCodes = await stripe.promotionCodes.list({
-      code: couponCode.toUpperCase(),
-      active: true,
-      limit: 1,
-    });
-    if (promoCodes.data.length === 0) {
-      return res.status(404).send({ error: 'Coupon non valido o scaduto.' });
-    }
-    const coupon = promoCodes.data[0].coupon;
-    let discount = 0;
-    if (coupon.percent_off) {
-      discount = originalAmount * (coupon.percent_off / 100);
-    } else if (coupon.amount_off) {
-      discount = coupon.amount_off;
-    }
-
-    const newTotal = Math.max(0, originalAmount - discount);
-    const finalDiscount = Math.round(discount);
-    const finalNewTotal = Math.round(newTotal);
-
-    res.status(200).json({
-      isValid: true,
-      discount: finalDiscount,
-      newTotal: finalNewTotal,
-      couponId: coupon.id
-    });
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Errore sconosciuto';
-    res.status(500).send({ error: `Errore nella validazione del coupon: ${errorMessage}` });
-  }
-};
-app.post('/api/validate-coupon', validateCouponHandler);
-
-// ---- PAGAMENTO ----
-const createPaymentIntentHandler: RequestHandler = async (req, res) => {
-  const { amount } = req.body;
-  if (typeof amount !== 'number' || amount < 0) {
-    res.status(400).send({ error: 'Importo non valido o mancante.' });
-    return;
-  }
-  if (amount === 0) {
-    res.send({ clientSecret: null, status: 'succeeded' });
-    return;
-  }
-  try {
-    const paymentIntent = await stripe.paymentIntents.create({
-      amount: Math.round(amount),
-      currency: 'eur',
-      automatic_payment_methods: { enabled: true },
-    });
-    res.send({ clientSecret: paymentIntent.client_secret });
-  } catch (error: unknown) {
-    const errorMessage = error instanceof Error ? error.message : 'Errore sconosciuto';
-    res.status(500).send({ error: errorMessage });
-  }
-};
-app.post('/api/create-payment-intent', createPaymentIntentHandler);
-
-// ---- ORDINE ----
-const sendOrderConfirmationHandler: RequestHandler = async (req, res) => {
-  const { customerData, orderSummary, orderTotal } = req.body;
-  if (!customerData || !orderSummary || !orderTotal) {
-    res.status(400).json({ message: 'Dati dell\'ordine mancanti.' });
-    return;
-  }
-  const fullAddress = `${customerData.street}, ${customerData.zip} ${customerData.city} (${customerData.province})`;
-
-  const adminMsg = {
-    to: 'tecnolife46@gmail.com',
-    from: SENDGRID_FROM_EMAIL,
-    subject: `Nuovo Ordine Confermato da ${customerData.fullName}`,
-    html: `<h1>Nuovo Ordine Ricevuto!</h1>
-           <p><strong>Cliente:</strong> ${customerData.fullName}</p>
-           <p><strong>Email:</strong> ${customerData.email}</p>
-           <p><strong>Telefono:</strong> ${customerData.phone}</p>
-           <p><strong>Indirizzo di Fatturazione:</strong> ${fullAddress}</p>
-           <hr>
-           <h3>Riepilogo Ordine:</h3>
-           <pre style="font-family: monospace; white-space: pre-wrap;">${orderSummary}</pre>
-           <hr>
-           <p style="font-size: 1.2em;"><strong>TOTALE: ${orderTotal} €</strong></p>`,
-  };
-  const customerMsg = {
-    to: customerData.email,
-    from: SENDGRID_FROM_EMAIL,
-    subject: 'Il tuo ordine PrintMaster3D è stato confermato!',
-    html: `<h1>Grazie per il tuo ordine, ${customerData.fullName}!</h1>
-          <p>Abbiamo ricevuto il tuo ordine e lo stiamo elaborando. Ecco un riepilogo:</p>
-          <hr>
-          <h3>Il tuo Riepilogo:</h3>
-          <pre style="font-family: monospace; white-space: pre-wrap;">${orderSummary}</pre>
-          <hr>
-          <p style="font-size: 1.2em;"><strong>TOTALE PAGATO: ${orderTotal} €</strong></p>
-          <br><p><strong>Nota importante:</strong> Potrai ritirare il tuo ordine presso la nostra sede in Via Scale Sant'Antonio, 59, Aci Catena (CT).</p>
-          <p>Ti contatteremo al numero <strong>${customerData.phone}</strong> non appena sarà pronto per il ritiro.</p>
-          <p>Grazie,<br>Il team di PrintMaster3D</p>`,
-  };
-  try {
-    await sgMail.send(adminMsg);
-    await sgMail.send(customerMsg);
-    res.status(200).json({ message: 'Email di conferma inviate con successo!' });
-  } catch (error) {
-    console.error("Errore invio email di conferma:", error);
-    res.status(500).json({ message: 'Errore durante l\'invio delle email.' });
-  }
-};
-app.post('/api/send-order-confirmation', sendOrderConfirmationHandler);
-
-// ---- CONTATTO PrintMaster3D CON HCAPTCHA E ALLEGATI ----
 const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Response) => {
   let fileToCleanUp: formidable.File | null = null;
+
   try {
     const data: { fields: formidable.Fields; files: formidable.Files } = await new Promise((resolve, reject) => {
       const uploadDir = './temp_uploads';
-      if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+      if (!fs.existsSync(uploadDir)) {
+        fs.mkdirSync(uploadDir);
+      }
+
       const form = formidable({
         multiples: false,
         maxFileSize: 10 * 1024 * 1024,
         uploadDir: uploadDir,
         keepExtensions: true,
       });
+
       form.parse(req, (err, fields, files) => {
         if (err) {
+          console.error('Formidable parse error:', err);
           if (err.code === formidable.errors.biggerThanMaxFileSize) {
             return reject({ status: 400, message: 'File is too large (max 10MB)', error: err.message });
           } else {
@@ -211,26 +99,38 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     const hcaptchaToken = Array.isArray(data.fields.hcaptchaToken) ? data.fields.hcaptchaToken[0] : String(data.fields.hcaptchaToken || '');
 
     const file = Array.isArray(data.files.file)
-      ? data.files.file[0]
-      : (data.files.file !== undefined ? data.files.file as formidable.File : null);
-
+                  ? data.files.file[0]
+                  : (data.files.file !== undefined ? data.files.file as formidable.File : null);
+    
     fileToCleanUp = file;
 
     if (!name || !email || !message) {
-      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) fs.unlinkSync(fileToCleanUp.filepath);
+      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+          fs.unlinkSync(fileToCleanUp.filepath);
+      }
       res.status(400).json({ message: 'Missing required fields' });
       return;
     }
 
     if (!hcaptchaToken) {
-      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) fs.unlinkSync(fileToCleanUp.filepath);
+      console.error('hCaptcha token is missing from the request.');
+      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+          fs.unlinkSync(fileToCleanUp.filepath);
+      }
       res.status(400).json({ message: 'hCaptcha token is missing. Please try again.' });
       return;
     }
 
+    // VERIFICA HCAPTCHA
     const HCAPTCHA_SECRET_KEY = process.env.HCAPTCHA_SECRET_KEY;
+    console.log('HCAPTCHA_SECRET_KEY exists:', !!HCAPTCHA_SECRET_KEY);
+    console.log('hcaptchaToken received:', hcaptchaToken);
+
     if (!HCAPTCHA_SECRET_KEY) {
-      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) fs.unlinkSync(fileToCleanUp.filepath);
+      console.error('HCAPTCHA_SECRET_KEY is not defined in environment variables');
+      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+          fs.unlinkSync(fileToCleanUp.filepath);
+      }
       res.status(500).json({ message: 'Server configuration error: HCAPTCHA_SECRET_KEY not set.' });
       return;
     }
@@ -243,62 +143,129 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
           response: hcaptchaToken,
           remoteip: req.ip || ''
         }).toString(),
-        { headers: { 'Content-Type': 'application/x-www-form-urlencoded' } }
+        {
+          headers: {
+            'Content-Type': 'application/x-www-form-urlencoded'
+          }
+        }
       );
 
-      const { success } = hcaptchaVerifyResponse.data;
+      // CORREZIONE QUI: Assicurati che TypeScript riconosca il tipo dei dati
+      const { success, 'error-codes': errorCodes } = hcaptchaVerifyResponse.data as HCaptchaVerifyResponse;
 
       if (!success) {
-        if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) fs.unlinkSync(fileToCleanUp.filepath);
-        res.status(401).json({ message: 'hCaptcha verification failed. Please try again.' });
+        console.error('hCaptcha verification failed:', errorCodes);
+        if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+            fs.unlinkSync(fileToCleanUp.filepath);
+        }
+        res.status(401).json({ message: 'hCaptcha verification failed. Please try again.', errorCodes });
         return;
       }
     } catch (hcaptchaError) {
-      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) fs.unlinkSync(fileToCleanUp.filepath);
+      console.error('Error during hCaptcha verification request:', hcaptchaError);
+      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+          fs.unlinkSync(fileToCleanUp.filepath);
+      }
       res.status(500).json({ message: 'Could not verify hCaptcha. Please try again later.' });
       return;
     }
 
-    let attachments = [];
+    const resendApiKey = process.env.RESEND_API_KEY;
+    const resendFromEmail = process.env.RESEND_FROM_EMAIL || process.env.RESEND_FROM_KEY || process.env.EMAIL_USER;
+    const emailRecipient = process.env.EMAIL_TO || 'tecnolife46@gmail.com';
+
+    console.log('Resend config:', {
+      hasApiKey: !!resendApiKey,
+      resendFromEmail,
+      emailRecipient,
+    });
+
+    if (!resendApiKey) {
+      console.error('Resend API key is not configured.');
+      res.status(500).json({ message: 'Server configuration error: RESEND_API_KEY not set.' });
+      return;
+    }
+
+    if (!resendFromEmail) {
+      console.error('Resend from email is not configured.');
+      res.status(500).json({ message: 'Server configuration error: RESEND_FROM_EMAIL or RESEND_FROM_KEY not set.' });
+      return;
+    }
+
+    const attachments = [] as Array<{ name: string; type?: string; data: string }>;
     if (file) {
       try {
-        const fileContent = fs.readFileSync(file.filepath);
-        attachments.push({
-          content: fileContent.toString('base64'),
-          filename: file.originalFilename || 'attachment',
-          type: file.mimetype || 'application/octet-stream',
-          disposition: 'attachment'
-        });
+          const filePath = file.filepath;
+          if (!fs.existsSync(filePath)) {
+            throw new Error(`File not found at ${filePath}`);
+          }
+          const fileContent = fs.readFileSync(filePath);
+          attachments.push({
+              name: file.originalFilename || 'attachment',
+              type: file.mimetype || 'application/octet-stream',
+              data: fileContent.toString('base64'),
+          });
       } catch (readErr) {
-        res.status(500).json({ message: 'Error processing attachment', error: (readErr as Error).message });
-        return;
+          console.error('Error reading temporary file:', readErr);
+          res.status(500).json({ message: 'Error processing attachment', error: (readErr as Error).message });
+          return;
       }
     }
 
-    const msg = {
-      to: 'tecnolife46@gmail.com',
-      from: SENDGRID_FROM_EMAIL,
-      replyTo: email,
+    const resendPayload = {
+      from: resendFromEmail,
+      to: [emailRecipient],
       subject: `Nuova richiesta da ${name} - PrintMaster 3D`,
-      html: `<p><strong>Nome:</strong> ${name}</p>
-             <p><strong>Email:</strong> ${email}</p>
-             <p><strong>Messaggio:</strong></p>
-             <p>${message}</p>`,
-      attachments: attachments.length > 0 ? attachments : undefined
+      html: `
+        <p><strong>Nome:</strong> ${name}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Messaggio:</strong></p>
+        <p>${message}</p>
+      `,
+      reply_to: email,
+      attachments: attachments.length > 0 ? attachments : undefined,
     };
 
-    await sgMail.send(msg);
+    try {
+      await axios.post('https://api.resend.com/emails', resendPayload, {
+        headers: {
+          Authorization: `Bearer ${resendApiKey}`,
+          'Content-Type': 'application/json',
+        },
+      });
+    } catch (sendError) {
+      console.error('Errore durante l\'invio dell\'email con Resend:', sendError);
+      let errorMessage = 'Unknown error';
+      if (sendError instanceof Error) {
+        errorMessage = sendError.message;
+      }
+      if (typeof sendError === 'object' && sendError !== null && 'response' in sendError) {
+        const errorObj = sendError as { response?: { data?: unknown } };
+        const response = errorObj.response;
+        if (response && response.data) {
+          errorMessage = typeof response.data === 'string' ? response.data : JSON.stringify(response.data);
+        }
+      }
+      res.status(500).json({ message: 'Error sending email', error: errorMessage });
+      return;
+    }
+
     res.status(200).json({ message: 'Email sent successfully!' });
 
-  } catch (error: unknown) {
+  } catch (error: unknown) { 
     console.error('Errore generale nel server API:', error);
-    if (typeof error === 'object' && error !== null && 'status' in error && 'message' in error) {
-      const errObj = error as { status: number; message: string; error?: string };
-      res.status(errObj.status).json({ message: errObj.message, error: errObj.error });
+    if (
+        typeof error === 'object' &&
+        error !== null &&
+        'status' in error &&
+        'message' in error
+    ) {
+        const errObj = error as { status: number; message: string; error?: string };
+        res.status(errObj.status).json({ message: errObj.message, error: errObj.error });
     } else if (error instanceof Error) {
-      res.status(500).json({ message: 'Error sending email', error: error.message });
+        res.status(500).json({ message: 'Error sending email', error: error.message });
     } else {
-      res.status(500).json({ message: 'Error sending email', error: 'Unknown error' });
+        res.status(500).json({ message: 'Error sending email', error: 'Unknown error' });
     }
   } finally {
     if (fileToCleanUp && fileToCleanUp.filepath && fs.existsSync(fileToCleanUp.filepath)) {
@@ -308,36 +275,8 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     }
   }
 };
-app.post('/api/send-email', sendEmailHandler);
 
-// ---- CONTATTO PT ----
-const sendEmailPtHandler: RequestHandler = async (req: Request, res: Response) => {
-  const { nome, email, oggetto, messaggio } = req.body;
-  if (!nome || !email || !messaggio) {
-    return res.status(400).json({ message: 'Nome, email e messaggio sono obbligatori.' });
-  }
-  const msg = {
-    to: 'tecnolife46@gmail.com',
-    from: SENDGRID_FROM_EMAIL,
-    replyTo: email,
-    subject: `Nuovo Contatto da ${nome} (Sito PT)`,
-    html: `<h1>Nuovo Contatto su LicciardelloG. Personal Trainer</h1>
-           <p><strong>Nome:</strong> ${nome}</p>
-           <p><strong>Email:</strong> ${email}</p>
-           ${oggetto ? `<p><strong>Oggetto:</strong> ${oggetto}</p>` : ''}
-           <hr>
-           <p><strong>Messaggio:</strong></p>
-           <p>${messaggio.replace(/\n/g, '<br>')}</p>`
-  };
-  try {
-    await sgMail.send(msg);
-    res.status(200).json({ message: 'Email inviata con successo!' });
-  } catch (error) {
-    console.error('Errore invio email dal sito PT:', error);
-    res.status(500).json({ message: 'Errore durante l\'invio dell\'email.' });
-  }
-};
-app.post('/api/send-email-pt', sendEmailPtHandler);
+app.post('/api/send-email', sendEmailHandler);
 
 app.listen(port, () => {
   console.log(`Server API listening on port ${port}`);
