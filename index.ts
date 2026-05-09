@@ -44,7 +44,8 @@ const allowedOrigins = [
   'https://www.printmaster3d.netlify.app',
   'https://printmaster3d.it', // Dominio senza www
   'https://www.printmaster3d.it', // AGGIUNTO: Dominio con www
-  'https://printmaster-3d-main.onrender.com' // Se usi il server Render sullo stesso dominio
+  'https://printmaster-3d-main.onrender.com', // Se usi il server Render sullo stesso dominio
+  'https://ptlicciardellog.netlify.app' // Nuovo dominio per l'invio email
 ];
 
 app.use(cors({
@@ -171,7 +172,24 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     }
 
     const resendApiKey = process.env.RESEND_API_KEY;
-    const resendFromEmail = process.env.RESEND_FROM_EMAIL || process.env.RESEND_FROM_KEY || process.env.EMAIL_USER;
+    
+    // Logghiamo i valori originali per il debug
+    console.log('DEBUG - Original Env Vars:', {
+      RESEND_FROM_EMAIL: process.env.RESEND_FROM_EMAIL,
+      RESEND_FROM_KEY: process.env.RESEND_FROM_KEY,
+      EMAIL_USER: process.env.EMAIL_USER
+    });
+
+    // Se RESEND_FROM_EMAIL non è configurato o è una gmail (che fallirebbe se non verificata), 
+    // usiamo l'indirizzo di onboarding di Resend.
+    let resendFromEmail = process.env.RESEND_FROM_EMAIL || process.env.RESEND_FROM_KEY || process.env.EMAIL_USER;
+    
+    // Forziamo onboarding@resend.dev se è gmail o se non è presente
+    if (!resendFromEmail || resendFromEmail.toLowerCase().includes('gmail.com')) {
+      console.log('DEBUG - Forcing onboarding@resend.dev because sender is gmail or missing');
+      resendFromEmail = 'onboarding@resend.dev';
+    }
+    
     const emailRecipient = process.env.EMAIL_TO || 'tecnolife46@gmail.com';
 
     console.log('Resend config:', {
@@ -183,12 +201,6 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     if (!resendApiKey) {
       console.error('Resend API key is not configured.');
       res.status(500).json({ message: 'Server configuration error: RESEND_API_KEY not set.' });
-      return;
-    }
-
-    if (!resendFromEmail) {
-      console.error('Resend from email is not configured.');
-      res.status(500).json({ message: 'Server configuration error: RESEND_FROM_EMAIL or RESEND_FROM_KEY not set.' });
       return;
     }
 
