@@ -186,8 +186,9 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     
     // Forziamo onboarding@resend.dev se è gmail o se non è presente
     if (!resendFromEmail || resendFromEmail.toLowerCase().includes('gmail.com')) {
-      console.log('DEBUG - Forcing onboarding@resend.dev because sender is gmail or missing');
-      resendFromEmail = 'onboarding@resend.dev';
+  console.error('Mittente non valido configurato');
+  res.status(500).json({ message: 'Errore configurazione server: mittente non valido.' });
+  return;
     }
     
     const emailRecipient = process.env.EMAIL_TO || 'tecnolife46@gmail.com';
