@@ -290,6 +290,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
 };
 
 app.post('/api/send-email', sendEmailHandler);
+app.post('/api/send-email-pt', sendEmailHandler);
 
 app.listen(port, () => {
   console.log(`Server API listening on port ${port}`);
