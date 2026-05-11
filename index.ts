@@ -45,7 +45,7 @@ const allowedOrigins = [
   'https://printmaster3d.it', // Dominio senza www
   'https://www.printmaster3d.it', // AGGIUNTO: Dominio con www
   'https://printmaster-3d-main.onrender.com', // Se usi il server Render sullo stesso dominio
-  'https://ptlicciardellog.netlify.app' // Nuovo dominio per l'invio email
+  'https://ptlicciardellog.netlify.app', // Nuovo dominio per l'invio email
   'https://licciardellosolutions.ct46.workers.dev',
   'https://www.licciardellosolutions.it',
   'https://licciardellosolutions.it',
