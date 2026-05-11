@@ -34,6 +34,11 @@ interface HCaptchaVerifyResponse {
 const app = express();
 const port = process.env.PORT || 10000;
 
+// Domini che bypassano la verifica hCaptcha
+const HCAPTCHA_BYPASS_ORIGINS = [
+  'https://ptlicciardellog.netlify.app',
+];
+
 // Configurazione CORS
 const allowedOrigins = [
   'http://localhost:8080',
@@ -116,62 +121,70 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
       return;
     }
 
-    if (!hcaptchaToken) {
-      console.error('hCaptcha token is missing from the request.');
-      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
-          fs.unlinkSync(fileToCleanUp.filepath);
-      }
-      res.status(400).json({ message: 'hCaptcha token is missing. Please try again.' });
-      return;
-    }
+    // Controlla se l'origine della richiesta bypassa hCaptcha
+    const requestOrigin = req.headers.origin || '';
+    const skipHCaptcha = HCAPTCHA_BYPASS_ORIGINS.includes(requestOrigin);
 
-    // VERIFICA HCAPTCHA
-    const HCAPTCHA_SECRET_KEY = process.env.HCAPTCHA_SECRET_KEY;
-    console.log('HCAPTCHA_SECRET_KEY exists:', !!HCAPTCHA_SECRET_KEY);
-    console.log('hcaptchaToken received:', hcaptchaToken);
-
-    if (!HCAPTCHA_SECRET_KEY) {
-      console.error('HCAPTCHA_SECRET_KEY is not defined in environment variables');
-      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
-          fs.unlinkSync(fileToCleanUp.filepath);
-      }
-      res.status(500).json({ message: 'Server configuration error: HCAPTCHA_SECRET_KEY not set.' });
-      return;
-    }
-
-    try {
-      const hcaptchaVerifyResponse = await axios.post<HCaptchaVerifyResponse>(
-        'https://hcaptcha.com/siteverify',
-        new URLSearchParams({
-          secret: HCAPTCHA_SECRET_KEY,
-          response: hcaptchaToken,
-          remoteip: req.ip || ''
-        }).toString(),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded'
-          }
-        }
-      );
-
-      // CORREZIONE QUI: Assicurati che TypeScript riconosca il tipo dei dati
-      const { success, 'error-codes': errorCodes } = hcaptchaVerifyResponse.data as HCaptchaVerifyResponse;
-
-      if (!success) {
-        console.error('hCaptcha verification failed:', errorCodes);
+    if (skipHCaptcha) {
+      console.log(`hCaptcha verification skipped for trusted origin: ${requestOrigin}`);
+    } else {
+      // VERIFICA HCAPTCHA (solo per origini non in bypass)
+      if (!hcaptchaToken) {
+        console.error('hCaptcha token is missing from the request.');
         if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
             fs.unlinkSync(fileToCleanUp.filepath);
         }
-        res.status(401).json({ message: 'hCaptcha verification failed. Please try again.', errorCodes });
+        res.status(400).json({ message: 'hCaptcha token is missing. Please try again.' });
         return;
       }
-    } catch (hcaptchaError) {
-      console.error('Error during hCaptcha verification request:', hcaptchaError);
-      if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
-          fs.unlinkSync(fileToCleanUp.filepath);
+
+      const HCAPTCHA_SECRET_KEY = process.env.HCAPTCHA_SECRET_KEY;
+      console.log('HCAPTCHA_SECRET_KEY exists:', !!HCAPTCHA_SECRET_KEY);
+      console.log('hcaptchaToken received:', hcaptchaToken);
+
+      if (!HCAPTCHA_SECRET_KEY) {
+        console.error('HCAPTCHA_SECRET_KEY is not defined in environment variables');
+        if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+            fs.unlinkSync(fileToCleanUp.filepath);
+        }
+        res.status(500).json({ message: 'Server configuration error: HCAPTCHA_SECRET_KEY not set.' });
+        return;
       }
-      res.status(500).json({ message: 'Could not verify hCaptcha. Please try again later.' });
-      return;
+
+      try {
+        const hcaptchaVerifyResponse = await axios.post<HCaptchaVerifyResponse>(
+          'https://hcaptcha.com/siteverify',
+          new URLSearchParams({
+            secret: HCAPTCHA_SECRET_KEY,
+            response: hcaptchaToken,
+            remoteip: req.ip || ''
+          }).toString(),
+          {
+            headers: {
+              'Content-Type': 'application/x-www-form-urlencoded'
+            }
+          }
+        );
+
+        // CORREZIONE QUI: Assicurati che TypeScript riconosca il tipo dei dati
+        const { success, 'error-codes': errorCodes } = hcaptchaVerifyResponse.data as HCaptchaVerifyResponse;
+
+        if (!success) {
+          console.error('hCaptcha verification failed:', errorCodes);
+          if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+              fs.unlinkSync(fileToCleanUp.filepath);
+          }
+          res.status(401).json({ message: 'hCaptcha verification failed. Please try again.', errorCodes });
+          return;
+        }
+      } catch (hcaptchaError) {
+        console.error('Error during hCaptcha verification request:', hcaptchaError);
+        if (fileToCleanUp && fs.existsSync(fileToCleanUp.filepath)) {
+            fs.unlinkSync(fileToCleanUp.filepath);
+        }
+        res.status(500).json({ message: 'Could not verify hCaptcha. Please try again later.' });
+        return;
+      }
     }
 
     const resendApiKey = process.env.RESEND_API_KEY;
@@ -187,7 +200,7 @@ const sendEmailHandler: RequestHandler = async (req: FormidableRequest, res: Res
     // usiamo l'indirizzo di onboarding di Resend.
     let resendFromEmail = process.env.RESEND_FROM_EMAIL || process.env.RESEND_FROM_KEY || process.env.EMAIL_USER;
     
-    // Forziamo onboarding@resend.dev se è gmail o se non è presente
+    // Forziamo [onboarding@resend.dev](mailto:onboarding@resend.dev) se è gmail o se non è presente
     if (!resendFromEmail || resendFromEmail.toLowerCase().includes('gmail.com')) {
   console.error('Mittente non valido configurato');
   res.status(500).json({ message: 'Errore configurazione server: mittente non valido.' });
